@@ -88,7 +88,7 @@ sub invoke {
 	if (my $host = $self->{options}->{host}) {
 		return unless $request->remote_host == $host;
 	}
-	return unless my @values = ($request->request_uri =~ $self->{pattern});
+	return unless my @values = ($request->path =~ $self->{pattern});
 	$params->{$_} = uri_unescape(shift(@values)) foreach @{$self->{param_keys}};
 	push(@splats, $params->{$_}) foreach grep {/^_splat_\d+$/} keys %{$params};
 	unless (scalar @splats == 0) {
@@ -98,30 +98,82 @@ sub invoke {
 	return Sinatra::Result->new($self->{block}, $params, 200);
 }
 
+package Sinatra::Helper;
+use strict;
+use HTML::Template;
+use JSON::Any;
+
+sub env_html{
+	my $output;
+	$output .= $_ . " = " . $ENV{$_}  . "<br>" foreach sort keys %ENV;
+	return "<p>$output</p>";
+}
+
+sub redirect{
+	my ($self, $url) = @_;
+	$self->status(302);
+	$self->header('Location', $url);
+	$self->body('Moving to location ' . $url);
+	die "halt";
+}
+
+sub render{
+	my ($self, $renderer, $template, $options) = @_;
+	my $method_name = "render_" . $renderer;
+	my $filename = $self->template_filename($renderer, $template, $options);
+	$self->$method_name($filename, $options);
+}
+
+sub template_filename{
+	my ($self, $renderer, $template, $options) = @_;
+	my $path = ($options->{view_directory} || $self->options->{view_directory}) . "/" . $template . "." . $renderer;
+	return $path;
+}
+
+sub htmpl{
+	my $self = shift;
+	$self->render('htmpl', @_);
+}
+
+sub render_htmpl{
+	my($self, $filename, $options) = @_;
+	my $t = HTML::Template->new('filename' => $filename, die_on_bad_params => 0, blind_cache => 1);
+	$t->param($self->params);
+	return $t->output();
+}
+
+sub json{
+	my ($self, $object) = @_;
+	return JSON::Any->new->encode($object);
+}
+
 package Sinatra::Response;
 use strict;
+use base 'Sinatra::Helper';
 use HTTP::Status qw(status_message);
 
 sub new {
-	my ($class, $request, $result) = @_;
+	my ($class, $request, $result, $options) = @_;
 	return bless {
 		'request' => $request,
-		'result' => $result
+		'result' => $result,
+		'options' => $options
 	}, $class;
 }
-Sinatra::Response->attr_accessor(qw/request status body/);
+Sinatra::Response->attr_accessor(qw/request status body result options/);
 
 sub params{
 	my $self = shift;
 	unless (defined($self->{params})) {
-		$self->{params}->{$_} = $self->request->param($_) foreach (@{$self->request->param});
+		$self->{params}->{$_} = $self->request->param($_) foreach ($self->request->param);
 		$self->{params}->{$_} = $self->result->params->{$_} foreach keys %{$self->result->params};
 	}
+	return $self->{params};
 }
 sub run{
 	my ($self, $code) = @_;
 	my $body = $code->($self);
-	$self->body($body) if defined $body;
+	$self->body($body);
 }
 
 sub header{
@@ -150,13 +202,40 @@ sub output{
 package Sinatra::Application;
 use strict;
 
-my (%events, %filters, %errors);
+my (%events, %filters, %errors, %templates);
 sub new{
-	$errors{'not_found'} = sub{
-		return 'Could not the request path';
-	};
-	return bless {}, shift;
+	my $class = shift;
+
+	my $self = {};
+	bless($self, $class);
+	$self->load_defaults;
+	return $self;
 }
+
+sub load_defaults{
+	my $self = shift;
+	$self->{options} = {
+		'environment' => $ENV{'SINATRA_ENV'} || 'development',
+		'view_directory' => $ENV{'DOCUMENT_ROOT'} . '/views'
+	};
+	$errors{'standard'} = sub{
+		my $self = shift;
+		$self->content_type('text/html');
+		return 'An error occurred. Fix it!' . $self->env_html;
+	};
+	$errors{'not_found'} = sub{
+		my $self = shift;
+		$self->content_type('text/html');
+		return 'Could not the request path: ' . $self->request->request_uri . $self->env_html;
+	};
+}
+
+sub options{
+	my ($self, $options) = @_;
+	%{$self->{options}} = {%{$self->{options}}, %{$options}} if defined $options;
+	return $self->{options};
+}
+
 sub run {
 	my $self = shift;
 	use FCGI;
@@ -164,6 +243,7 @@ sub run {
 	
 	my $request = FCGI::Request();
 	while($request->Accept() >= 0) {
+		$ENV{'QUERY_STRING'} = (split(/\?/,$ENV{'REQUEST_URI'}))[1] if $ENV{'QUERY_STRING'} eq "";
 		CGI::Minimal::_reset_globals();
 		print $self->dispatch(CGI::Minimal->new())->output;
 	}
@@ -188,6 +268,11 @@ sub define_error{
 	}
 }
 
+sub define_template{
+	my ($self, $name, $body) = @_;
+	$templates{$name} = $body;
+}
+
 sub lookup{
 	my ($self, $request) = @_;
 	my $method = lc($request->request_method);
@@ -200,8 +285,9 @@ sub lookup{
 
 sub dispatch{
 	my ($self, $request) = @_;
+	$self->load_defaults if $self->options->{environment} eq "development";
 	my $result = $self->lookup($request);
-	my $response = Sinatra::Response->new($request, $result->params);
+	my $response = Sinatra::Response->new($request, $result, $self->options);
 	$response->status($result->status);
 	
 	eval {
@@ -210,12 +296,15 @@ sub dispatch{
 		$response->run($_) foreach @{$filters{after}};
 	};
 	if ($@) {
-		warn "Error occured $0: " . $@;
-		$response->status(500);
-		my $output = "<p>Error Message: $@</p>";
-		$output .= $_ . " = " . $ENV{$_} . "<br>" foreach keys %ENV;
-		$response->body($output);
+		unless ($@ eq "halt") {
+			warn "Error occured $0: " . $@;
+			$response->status(500);
+			$response->run($errors{$@} || $errors{standard});
+		} else{
+			
+		}
 	}
+	$response->body("") if lc($request->request_method) eq "head";
 	return $response
 }
 
@@ -234,9 +323,16 @@ sub after(&) {$application->define_filter('after', @_);}
 
 sub error {$application->define_error(@_);}
 sub not_found {$application->define_error('not_found',shift);}
+sub set_options{
+	$application->options(@_);
+}
+sub set_option{
+	my ($key, $value) = @_;
+	set_options($key => $value);
+}
 sub configure {
 	my $code = pop @_;
-	$code->() if scalar(@_) == 0;
+	$code->() if scalar(@_) == 0 || grep {$_ eq $application->options->{environment}} @_;
 }
 sub dispatch {
 	my $request = shift;
@@ -255,18 +351,6 @@ sub request_method {return $ENV{'REQUEST_METHOD'};}
 sub path_info {return $ENV{'PATH_INFO'};}
 sub user_agent {return $ENV{'HTTP_USER_AGENT'};}
 sub remote_host {return $ENV{'REMOTE_HOST'} || $ENV{'REMOTE_ADDR'} || 'localhost';}
-sub request_uri{
-	my $uri = $ENV{'REQUEST_URI'};
-	if (defined $uri) {
-		return ($uri =~ m{^\w+\://[^/]+(/.*|$)$}) ? $1 : $uri;
-	} else{
-		#for IIS
-		(my $script_filename = $ENV{'SCRIPT_NAME'}) =~ m|[^/]+$|;
-		$uri = $ENV{'PATH_INFO'};
-		$uri =~ s/$script_filename\/// if defined $script_filename;
-		$uri .= '?' . $ENV{'QUERY_STRING'} if exists $ENV{'QUERY_STRING'};
-		$ENV{'REQUEST_URI'} = $uri;
-		return $uri;
-	}
-}
+sub request_uri{return $ENV{'REQUEST_URI'};}
+sub path{(split(/\?/,request_uri))[0];}
 1; #the magnificent always return true
