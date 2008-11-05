@@ -1,21 +1,96 @@
-#!/usr/bin/env perl
+#!/usr/bin/env perl -w
 require 'sinatra.pl';
 
 use strict;
+use DBI;
+use Rose::DB::Object::Loader;
 
-get(':name/:number', {}, sub{
-	my $r = shift;
-	$r->content_type('text/html');
-	$r->htmpl('testing');
+configure(sub{
+	my $loader = Rose::DB::Object::Loader->new(
+		db_dsn       => 'dbi:SQLite:dbname=test.sql',
+		base_classes => [qw(Rose::DB::Object Rose::DB::Object::Helpers)]
+	);
+	$loader->make_classes;
 });
 
-get(':name/:number.:format', {}, sub{
+# list - GET /user
+get('user', {}, sub{
 	my $r = shift;
 	$r->content_type('text/plain');
-	$r->json($r->params) if $r->params->{format} eq "json";
+	my $users = [map {$_->as_tree} @{User::Manager->get_users()}];
+	$r->json($users);
 });
 
+# create - POST /user
+post('user', {}, sub{
+	my $r = shift;
+	$r->content_type('text/plain');
+	delete $r->params->{id}; #someone might override different ID
+	my $user = User->new('email'=>$r->params->{email}, 'password'=>$r->params->{password});
+	if ($user->save) {
+		$r->status(200);
+		return $user->id;
+	} else{
+		$r->status(500);
+		return 'Error cannot create new user';
+	}
+});
+
+# show - GET /user/id
+get('user/:id', {}, sub{
+	my $r = shift;
+	$r->content_type('text/plain');
+	my $user = User->new(id=>$r->params->{id});
+	$user->load('speculative' => 1);
+	if ($user->not_found) {
+		$r->status(404);
+	} else{
+		return $r->json($user->as_tree);
+	}
+});
+
+# update - PUT /user/1
+put('user/:id', {}, sub {	
+	my $r = shift;
+	my $user = User->new(id=>$r->params->{id});
+	$user->load(speculative=>1);
+	if ($user->not_found) {
+		$r->status(404);
+	} else{
+		$user->email = $r->params->{email};
+		$user->password = $r->params->{password};
+		$user->save;
+		$r->status(202);
+	}
+});
+
+# destroy - DELETE /user/1
+destroy('user/:id', {}, sub{	
+	my $r = shift;
+	my $user = User->new(id=>$r->params->{id});
+	$user->delete;
+	$r->status(202);
+});
+
+sub task_setup{
+	my $dbh = DBI->connect('dbi:SQLite:dbname=test.sql');
+	$dbh->do(qq~DROP TABLE IF EXISTS users;~);
+	$dbh->do(qq~CREATE TABLE users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			email TEXT,
+			password TEXT
+		);~);
+	$dbh->do(qq~	
+		INSERT INTO users VALUES (NULL, 'alf\@cats.com', 'soygreen123');
+	~);
+	$dbh->do(qq~
+		INSERT INTO users VALUES (NULL, 'people\@allaround.com', 'passw0RD');
+	~);
+}
+
+#initial setup: perl example.pl setup
 #usage: lighttpd -f lighttpd.conf -D
+#required modules: JSON::Any, HTML::Template, DBI, DBD::SQLite, Rose::DB::Object
 #goto URLs:
 #   http://0.0.0.0:3000/asdf/1234.json
 #   http://0.0.0.0:3000/asdf/1234
