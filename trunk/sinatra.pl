@@ -104,7 +104,7 @@ use HTML::Template;
 use JSON::Any;
 
 sub env_html{
-	my $output;
+	my $output = "";
 	$output .= $_ . " = " . $ENV{$_}  . "<br>" foreach sort keys %ENV;
 	return "<p>$output</p>";
 }
@@ -143,8 +143,8 @@ sub render_htmpl{
 }
 
 sub json{
-	my ($self, $object) = @_;
-	return JSON::Any->new->encode($object);
+	my $self = shift;
+	return JSON::Any->new->encode(@_);
 }
 
 package Sinatra::Response;
@@ -167,6 +167,7 @@ sub params{
 	unless (defined($self->{params})) {
 		$self->{params}->{$_} = $self->request->param($_) foreach ($self->request->param);
 		$self->{params}->{$_} = $self->result->params->{$_} foreach keys %{$self->result->params};
+		$self->{params} ||= {};
 	}
 	return $self->{params};
 }
@@ -214,14 +215,14 @@ sub new{
 
 sub load_defaults{
 	my $self = shift;
-	$self->{options} = {
+	$self->options({
 		'environment' => $ENV{'SINATRA_ENV'} || 'development',
-		'view_directory' => $ENV{'DOCUMENT_ROOT'} . '/views'
-	};
+		'view_directory' => ($ENV{'DOCUMENT_ROOT'} || '.') . '/views'
+	});
 	$errors{'standard'} = sub{
 		my $self = shift;
 		$self->content_type('text/html');
-		return 'An error occurred. Fix it!' . $self->env_html;
+		return '<p><b>'.$self->params->{_error_msg} . '</b></p><p>An error occurred. Fix it!</p>' . $self->env_html;
 	};
 	$errors{'not_found'} = sub{
 		my $self = shift;
@@ -232,7 +233,7 @@ sub load_defaults{
 
 sub options{
 	my ($self, $options) = @_;
-	%{$self->{options}} = {%{$self->{options}}, %{$options}} if defined $options;
+	if (defined $options) {$self->{options}->{$_} = $options->{$_} foreach keys %{$options}};
 	return $self->{options};
 }
 
@@ -299,6 +300,7 @@ sub dispatch{
 		unless ($@ eq "halt") {
 			warn "Error occured $0: " . $@;
 			$response->status(500);
+			$response->params->{_error_msg} = $@;
 			$response->run($errors{$@} || $errors{standard});
 		} else{
 			
@@ -316,7 +318,8 @@ my $application = Sinatra::Application->new();
 sub get($$&) {$application->define_event('get',@_);}
 sub post($$&) {$application->define_event('post',@_);}
 sub head($$&) {$application->define_event('head',@_);}
-sub delete($$&) {$application->define_event('delete',@_);}
+sub destroy($$&) {$application->define_event('delete',@_);}
+sub put($$&) {$application->define_event('put',@_);}
 
 sub before(&) {$application->define_filter('before', @_);}
 sub after(&) {$application->define_filter('after', @_);}
@@ -324,15 +327,19 @@ sub after(&) {$application->define_filter('after', @_);}
 sub error {$application->define_error(@_);}
 sub not_found {$application->define_error('not_found',shift);}
 sub set_options{
-	$application->options(@_);
+	$application->options(shift);
 }
 sub set_option{
 	my ($key, $value) = @_;
-	set_options($key => $value);
+	set_options({$key => $value});
+}
+sub get_option{
+	my $key = shift;
+	return $application->options->{$key};
 }
 sub configure {
 	my $code = pop @_;
-	$code->() if scalar(@_) == 0 || grep {$_ eq $application->options->{environment}} @_;
+	$code->($application) if (scalar(@_) == 0 || grep {$_ eq $application->options->{environment}} @_);
 }
 sub dispatch {
 	my $request = shift;
@@ -340,8 +347,14 @@ sub dispatch {
 }
 
 END {
-	print STDERR "Starting FCGI\n";
-	$application->run();
+	my $taskname = 'task_' . ($ARGV[0] || '');
+	if (main->can($taskname)) {
+		print "Running task " . $ARGV[0] . "\n";
+		main->$taskname();
+	} else{
+		print STDERR "Starting FCGI\n";
+		$application->run();
+	}
 }
 
 #extensions for CGI::Minimal to support certain methods
