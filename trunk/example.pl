@@ -1,5 +1,5 @@
 #!/usr/bin/env perl -w
-require 'sinatra.pl';
+require 'lib/sinatra.pl';
 
 use strict;
 use DBI;
@@ -7,7 +7,7 @@ use Rose::DB::Object::Loader;
 
 configure(sub{
 	my $loader = Rose::DB::Object::Loader->new(
-		db_dsn       => 'dbi:SQLite:dbname=test.sql',
+		db_dsn       => 'dbi:SQLite:dbname=tmp/test.sql',
 		base_classes => [qw(Rose::DB::Object Rose::DB::Object::Helpers)]
 	);
 	$loader->make_classes;
@@ -73,7 +73,7 @@ destroy('user/:id', {}, sub{
 });
 
 sub task_setup{
-	my $dbh = DBI->connect('dbi:SQLite:dbname=test.sql');
+	my $dbh = DBI->connect('dbi:SQLite:dbname=tmp/test.sql');
 	$dbh->do(qq~DROP TABLE IF EXISTS users;~);
 	$dbh->do(qq~CREATE TABLE users (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
