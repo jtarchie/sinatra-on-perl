@@ -1,5 +1,6 @@
 #!/usr/bin/env perl -w
 require 'lib/sinatra.pl';
+require 'lib/cache.pl';
 
 use strict;
 use DBI;
@@ -14,11 +15,11 @@ configure(sub{
 });
 
 # list - GET /user
-get('user', {}, sub{
+get('user', {cache_page=>1}, sub{
 	my $r = shift;
 	$r->content_type('text/plain');
 	my $users = [map {$_->as_tree} @{User::Manager->get_users()}];
-	$r->json($users);
+	return $r->json($users);
 });
 
 # create - POST /user
@@ -37,7 +38,7 @@ post('user', {}, sub{
 });
 
 # show - GET /user/id
-get('user/:id', {}, sub{
+get('user/:id', {'cache_page'=>1}, sub{
 	my $r = shift;
 	$r->content_type('text/plain');
 	my $user = User->new(id=>$r->params->{id});
@@ -86,6 +87,10 @@ sub task_setup{
 	$dbh->do(qq~
 		INSERT INTO users VALUES (NULL, 'people\@allaround.com', 'passw0RD');
 	~);
+}
+
+sub task_clear{
+	`rm log/* tmp/*`;
 }
 
 #initial setup: perl example.pl setup

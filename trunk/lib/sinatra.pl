@@ -89,6 +89,7 @@ sub invoke {
 		return unless $request->remote_host == $host;
 	}
 	return unless my @values = ($request->path =~ $self->{pattern});
+	$params = $self->{options};
 	$params->{$_} = uri_unescape(shift(@values)) foreach @{$self->{param_keys}};
 	push(@splats, $params->{$_}) foreach grep {/^_splat_\d+$/} keys %{$params};
 	unless (scalar @splats == 0) {
@@ -217,7 +218,8 @@ sub load_defaults{
 	my $self = shift;
 	$self->options({
 		'environment' => $ENV{'SINATRA_ENV'} || 'development',
-		'view_directory' => ($ENV{'DOCUMENT_ROOT'} || '.') . '/views'
+		'view_directory' => ($ENV{'SINATRA_ROOT'} || $ENV{'DOCUMENT_ROOT'} || '.') . '/views',
+		'public_directory' => ($ENV{'SINATRA_ROOT'} || $ENV{'DOCUMENT_ROOT'} || '.') . '/public',
 	});
 	$errors{'standard'} = sub{
 		my $self = shift;
@@ -244,7 +246,8 @@ sub run {
 	
 	my $request = FCGI::Request();
 	while($request->Accept() >= 0) {
-		$ENV{'QUERY_STRING'} = (split(/\?/,$ENV{'REQUEST_URI'}))[1] if $ENV{'QUERY_STRING'} eq "";
+		#fix an error in lighttpd that it doesn't send a query string on 404 overload
+		$ENV{'QUERY_STRING'} = ((split(/\?/,$ENV{'REQUEST_URI'}))[1] || '') if ($ENV{'QUERY_STRING'} eq "");
 		CGI::Minimal::_reset_globals();
 		print $self->dispatch(CGI::Minimal->new())->output;
 	}
@@ -345,6 +348,7 @@ sub dispatch {
 	my $request = shift;
 	$application->dispatch($request);
 }
+sub application{return $application;}
 
 END {
 	my $taskname = 'task_' . ($ARGV[0] || '');
