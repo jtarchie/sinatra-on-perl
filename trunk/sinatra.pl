@@ -196,7 +196,7 @@ sub output{
 	$self->header('Content-length', length($self->body()));
 	my $output = 'HTTP/1.1 ' . $self->status . " " . status_message($self->status) . "\n";
 	$output .= join("\n", map {$_ . ": " . $self->{headers}->{$_}} keys %{$self->{headers}}) . "\n\n";
-	$output .= $self->body;
+	$output .= ($self->body || '');
 	return $output;
 }
 
