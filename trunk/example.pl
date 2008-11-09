@@ -1,6 +1,7 @@
 #!/usr/bin/env perl -w
 require 'lib/sinatra.pl';
 require 'lib/cache.pl';
+require 'lib/background.pl';
 
 use strict;
 use DBI;
@@ -12,14 +13,22 @@ configure(sub{
 		base_classes => [qw(Rose::DB::Object Rose::DB::Object::Helpers)]
 	);
 	$loader->make_classes;
+	start_job_server();
 });
 
 # list - GET /user
-get('user', {cache_page=>1}, sub{
+get('user', {cache_page=>'1'}, sub{
 	my $r = shift;
 	$r->content_type('text/plain');
 	my $users = [map {$_->as_tree} @{User::Manager->get_users()}];
 	return $r->json($users);
+});
+
+# an example of how to expire a page
+# using a background job
+get('expire', {}, sub{
+	send_job('expire_page', 'user');
+	return 'Expired successful';
 });
 
 # create - POST /user
@@ -38,7 +47,7 @@ post('user', {}, sub{
 });
 
 # show - GET /user/id
-get('user/:id', {'cache_page'=>1}, sub{
+get('user/:id', {'cache_page'=>'1'}, sub{
 	my $r = shift;
 	$r->content_type('text/plain');
 	my $user = User->new(id=>$r->params->{id});
@@ -79,13 +88,14 @@ sub task_setup{
 	$dbh->do(qq~CREATE TABLE users (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			email TEXT,
-			password TEXT
+			password TEXT,
+			created_at TEXT
 		);~);
 	$dbh->do(qq~	
-		INSERT INTO users VALUES (NULL, 'alf\@cats.com', 'soygreen123');
+		INSERT INTO users VALUES (NULL, 'alf\@cats.com', 'soygreen123', datetime('now'));
 	~);
 	$dbh->do(qq~
-		INSERT INTO users VALUES (NULL, 'people\@allaround.com', 'passw0RD');
+		INSERT INTO users VALUES (NULL, 'people\@allaround.com', 'passw0RD', datetime('now'));
 	~);
 }
 

@@ -37,7 +37,7 @@ sub new{
 	my ($class, $block, $params, $status) = @_;
 	return bless({
 		'block' => $block,
-		'params' => $params,
+		'params' => $params || {},
 		'status' => $status
 	}, $class);
 }
