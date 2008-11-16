@@ -244,6 +244,7 @@ sub run {
 	use FCGI;
 	use CGI::Minimal;
 	
+	print STDERR "Starting FCGI\n";
 	my $request = FCGI::Request();
 	while($request->Accept() >= 0) {
 		#fix an error in lighttpd that it doesn't send a query string on 404 overload
@@ -354,9 +355,9 @@ END {
 	my $taskname = 'task_' . ($ARGV[0] || '');
 	if (main->can($taskname)) {
 		print "Running task " . $ARGV[0] . "\n";
+		$application->set_option('in_task', 1);
 		main->$taskname();
 	} else{
-		print STDERR "Starting FCGI\n";
 		$application->run();
 	}
 }

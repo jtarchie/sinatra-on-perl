@@ -103,9 +103,14 @@ sub task_clear{
 	`rm log/* tmp/*`;
 }
 
+sub task_run{
+	`lighttpd -f lighttpd.conf -D`;
+}
+
 #initial setup: perl example.pl setup
-#usage: lighttpd -f lighttpd.conf -D
-#required modules: JSON::Any, HTML::Template, DBI, DBD::SQLite, Rose::DB::Object
+#usage: perl example.pl run
+#required modules: JSON::Any, HTML::Template, DBI, DBD::SQLite, Rose::DB::Object, CGI::Minimal
 #goto URLs:
-#   http://0.0.0.0:3000/asdf/1234.json
-#   http://0.0.0.0:3000/asdf/1234
+#   http://0.0.0.0:3000/user
+#   http://0.0.0.0:3000/user/1
+#   http://0.0.0.0:3000/user/2
