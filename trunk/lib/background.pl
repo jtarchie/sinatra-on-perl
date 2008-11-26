@@ -6,6 +6,7 @@ use JSON::Any;
 my $pipe = IO::Pipe->new;
 
 sub start_job_server{
+	return if $ENV{'SINATRA_ENVIRONMENT'} eq "TASK";
 	my $pid = fork;
 	if (! defined $pid) {
 		die "Cannot start up a background process. Apparently forking is not supported.\n";

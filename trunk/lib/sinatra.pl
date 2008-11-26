@@ -1,4 +1,4 @@
-package UNIVERSAL;
+package Sinatra::Base;
 
 sub alias_method{
 	my ($class, $new_method, $old_method) = @_;
@@ -31,6 +31,7 @@ sub attr_accessor{
 }
 
 package Sinatra::Result;
+use base 'Sinatra::Base';
 use strict;
 
 sub new{
@@ -44,7 +45,7 @@ sub new{
 Sinatra::Result->attr_reader(qw/block params status/);
 
 package Sinatra::Event;
-
+use base 'Sinatra::Base';
 use strict;
 use URI::Escape;
 
@@ -86,7 +87,7 @@ sub invoke {
 		$params->{agent} = $1;
 	}
 	if (my $host = $self->{options}->{host}) {
-		return unless $request->remote_host == $host;
+		return unless $request->remote_host eq $host;
 	}
 	return unless my @values = ($request->path =~ $self->{pattern});
 	$params = $self->{options};
@@ -100,6 +101,7 @@ sub invoke {
 }
 
 package Sinatra::Helper;
+use base 'Sinatra::Base';
 use strict;
 use HTML::Template;
 use JSON::Any;
@@ -149,6 +151,7 @@ sub json{
 }
 
 package Sinatra::Response;
+use base 'Sinatra::Base';
 use strict;
 use base 'Sinatra::Helper';
 use HTTP::Status qw(status_message);
@@ -202,6 +205,7 @@ sub output{
 }
 
 package Sinatra::Application;
+use base 'Sinatra::Base';
 use strict;
 
 my (%events, %filters, %errors, %templates);
@@ -311,7 +315,7 @@ sub dispatch{
 		}
 	}
 	$response->body("") if lc($request->request_method) eq "head";
-	return $response
+	return $response;
 }
 
 package main;
@@ -351,11 +355,14 @@ sub dispatch {
 }
 sub application{return $application;}
 
+BEGIN {
+	$ENV{'SINATRA_ENVIRONMENT'} = 'TASK' if defined $ARGV[0];
+}
 END {
 	my $taskname = 'task_' . ($ARGV[0] || '');
 	if (main->can($taskname)) {
-		print "Running task " . $ARGV[0] . "\n";
-		$application->set_option('in_task', 1);
+		print "Running task " . $ARGV[0] . " on pid:" . $$ . "\n";
+		set_option('in_task', 1);
 		main->$taskname();
 	} else{
 		$application->run();
