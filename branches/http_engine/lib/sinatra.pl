@@ -1,5 +1,9 @@
 package Sinatra::Base;
+use Data::Dumper;
 
+sub dump{
+	return Dumper(shift);
+}
 sub alias_method{
 	my ($class, $new_method, $old_method) = @_;
 	no strict 'refs';
@@ -74,7 +78,7 @@ sub new{
 		"($URI_CHAR+)";
 	}/ge;
 	
-	$self->{'pattern'} = qr/^\/{0,1}$regex$/;
+	$self->{'pattern'} = qr/^$regex\/{0,1}$/;
 	return bless($self, $class);
 }
 
@@ -87,9 +91,9 @@ sub invoke {
 		$params->{agent} = $1;
 	}
 	if (my $host = $self->{options}->{host}) {
-		return unless $request->remote_host eq $host;
+		return unless $request->hostname eq $host;
 	}
-	return unless my @values = ($request->path =~ $self->{pattern});
+	return unless my @values = ($request->request_uri =~ $self->{pattern});
 	$params = $self->{options};
 	$params->{$_} = uri_unescape(shift(@values)) foreach @{$self->{param_keys}};
 	push(@splats, $params->{$_}) foreach grep {/^_splat_\d+$/} keys %{$params};
@@ -150,45 +154,55 @@ sub json{
 	return JSON::Any->new->encode(@_);
 }
 
-package Sinatra::Response;
+package Sinatra::Context;
 use base 'Sinatra::Base';
 use strict;
 use base 'Sinatra::Helper';
 use HTTP::Status qw(status_message);
+our $AUTOLOAD;
 
 sub new {
-	my ($class, $request, $result, $options) = @_;
+	my ($class, $request, $response, $options, $route_params) = @_;
 	return bless {
 		'request' => $request,
-		'result' => $result,
-		'options' => $options
+		'response' => $response,
+		'options' => $options,
+		'route_params' => $route_params
 	}, $class;
 }
-Sinatra::Response->attr_accessor(qw/request status body result options/);
+Sinatra::Context->attr_accessor(qw/request status response options route_params/);
 
 sub params{
 	my $self = shift;
 	unless (defined($self->{params})) {
 		$self->{params}->{$_} = $self->request->param($_) foreach ($self->request->param);
-		$self->{params}->{$_} = $self->result->params->{$_} foreach keys %{$self->result->params};
+		$self->{params}->{$_} = $self->route_params->{$_} foreach keys %{$self->route_params};
 		$self->{params} ||= {};
 	}
 	return $self->{params};
 }
+
 sub run{
 	my ($self, $code) = @_;
 	my $body = $code->($self);
-	$self->body($body);
+	$self->response->body($body) if defined $body;
 }
 
 sub header{
 	my ($self, $header, $value) = @_;
-	$self->{headers}->{$header} = $value;
+	$self->response->headers->header($header => $value);
 }
 
 sub content_type{
 	my ($self, $content_type) = @_;
-	$self->header('Content-type', $content_type);
+	$self->response->headers->header('Content-type' => $content_type);
+}
+
+sub AUTOLOAD{
+	my $self = shift;
+	my $name = $AUTOLOAD;
+	$name =~ s/.*://;
+	$self->response->$name(@_);
 }
 
 sub output{
@@ -221,7 +235,7 @@ sub new{
 sub load_defaults{
 	my $self = shift;
 	$self->options({
-		'environment' => $ENV{'SINATRA_ENV'} || 'development',
+		'environment' => $ENV{'SINATRA_ENVIRONMENT'} || 'development',
 		'view_directory' => ($ENV{'SINATRA_ROOT'} || $ENV{'DOCUMENT_ROOT'} || '.') . '/views',
 		'public_directory' => ($ENV{'SINATRA_ROOT'} || $ENV{'DOCUMENT_ROOT'} || '.') . '/public',
 	});
@@ -243,19 +257,23 @@ sub options{
 	return $self->{options};
 }
 
-sub run {
+sub run{
 	my $self = shift;
-	use FCGI;
-	use CGI::Minimal;
-	
-	print STDERR "Starting FCGI\n";
-	my $request = FCGI::Request();
-	while($request->Accept() >= 0) {
-		#fix an error in lighttpd that it doesn't send a query string on 404 overload
-		$ENV{'QUERY_STRING'} = ((split(/\?/,$ENV{'REQUEST_URI'}))[1] || '') if ($ENV{'QUERY_STRING'} eq "");
-		CGI::Minimal::_reset_globals();
-		print $self->dispatch(CGI::Minimal->new())->output;
-	}
+
+	use HTTP::Engine;
+	my $engine = HTTP::Engine->new(
+		interface => {
+			module => 'FCGI',
+			request_handler => sub {
+				my $request = shift;
+				$self->dispatch(
+					$request, 
+					HTTP::Engine::Response->new
+				);
+			}
+		}
+	);
+	$engine->run;
 }
 
 sub define_event{
@@ -284,7 +302,7 @@ sub define_template{
 
 sub lookup{
 	my ($self, $request) = @_;
-	my $method = lc($request->request_method);
+	my $method = lc($request->method);
 	foreach my $event (@{$events{$method}}) {
 		my $invoke = $event->invoke($request);
 		return $invoke if defined $invoke;
@@ -293,28 +311,26 @@ sub lookup{
 }
 
 sub dispatch{
-	my ($self, $request) = @_;
+	my ($self, $request, $response) = @_;
 	$self->load_defaults if $self->options->{environment} eq "development";
 	my $result = $self->lookup($request);
-	my $response = Sinatra::Response->new($request, $result, $self->options);
-	$response->status($result->status);
+	my $context = Sinatra::Context->new($request, $response, $self->options, $result->params);
+	$context->status($result->status);
 	
 	eval {
-		$response->run($_) foreach @{$filters{before}};
-		$response->run($result->block());
-		$response->run($_) foreach @{$filters{after}};
+		$context->run($_) foreach @{$filters{before}};
+		$context->run($result->block());
+		$context->run($_) foreach @{$filters{after}};
 	};
 	if ($@) {
 		unless ($@ eq "halt") {
 			warn "Error occured $0: " . $@;
-			$response->status(500);
-			$response->params->{_error_msg} = $@;
-			$response->run($errors{$@} || $errors{standard});
-		} else{
-			
+			$context->status(500);
+			$context->params->{_error_msg} = $@;
+			$context->run($errors{$@} || $errors{standard});
 		}
 	}
-	$response->body("") if lc($request->request_method) eq "head";
+	$context->body("") if lc($request->method) eq "head";
 	return $response;
 }
 
@@ -356,7 +372,7 @@ sub dispatch {
 sub application{return $application;}
 
 BEGIN {
-	$ENV{'SINATRA_ENVIRONMENT'} = 'TASK' if defined $ARGV[0];
+	$ENV{'SINATRA_ENVIRONMENT'} = 'task' if defined $ARGV[0];
 }
 END {
 	my $taskname = 'task_' . ($ARGV[0] || '');
@@ -368,14 +384,3 @@ END {
 		$application->run();
 	}
 }
-
-#extensions for CGI::Minimal to support certain methods
-package CGI::Minimal;
-
-sub request_method {return $ENV{'REQUEST_METHOD'};}
-sub path_info {return $ENV{'PATH_INFO'};}
-sub user_agent {return $ENV{'HTTP_USER_AGENT'};}
-sub remote_host {return $ENV{'REMOTE_HOST'} || $ENV{'REMOTE_ADDR'} || 'localhost';}
-sub request_uri{return $ENV{'REQUEST_URI'};}
-sub path{(split(/\?/,request_uri))[0];}
-1; #the magnificent always return true

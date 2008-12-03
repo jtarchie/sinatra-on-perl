@@ -46,7 +46,7 @@ sub path_filename{
 after(sub{
 	my $r = shift;
 	#remember that the body gets overriden on anything other than undef
-	cache_page($r->request->path, $r->body, $r->params->{cache_page} ne "1" ? "." . $r->params->{cache_page} : undef) if (exists $r->params->{cache_page}); #this return undef if the if statement is true
+	cache_page($r->request->request_uri, $r->body, $r->params->{cache_page} ne "1" ? "." . $r->params->{cache_page} : undef) if (exists $r->params->{cache_page}); #this return undef if the if statement is true
 	return undef; #need to account for possible miss on cache
 });
 

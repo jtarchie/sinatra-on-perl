@@ -17,22 +17,22 @@ configure(sub{
 });
 
 # list - GET /user
-get('user', {cache_page=>'1'}, sub{
+get('/user', {cache_page=>'1'}, sub{
 	my $r = shift;
 	$r->content_type('text/plain');
 	my $users = [map {$_->as_tree} @{User::Manager->get_users()}];
-	return $r->json($users);
+	return $r->params->{name} . $r->json($users);
 });
 
 # an example of how to expire a page
 # using a background job
-get('expire', {}, sub{
+get('/expire', {}, sub{
 	send_job('expire_page', 'user');
 	return 'Expired successful';
 });
 
 # create - POST /user
-post('user', {}, sub{
+post('/user', {}, sub{
 	my $r = shift;
 	$r->content_type('text/plain');
 	delete $r->params->{id}; #someone might override different ID
@@ -47,7 +47,7 @@ post('user', {}, sub{
 });
 
 # show - GET /user/id
-get('user/:id', {'cache_page'=>'1'}, sub{
+get('/user/:id', {'cache_page'=>'1'}, sub{
 	my $r = shift;
 	$r->content_type('text/plain');
 	my $user = User->new(id=>$r->params->{id});
@@ -60,7 +60,7 @@ get('user/:id', {'cache_page'=>'1'}, sub{
 });
 
 # update - PUT /user/1
-put('user/:id', {}, sub {	
+put('/user/:id', {}, sub {	
 	my $r = shift;
 	my $user = User->new(id=>$r->params->{id});
 	$user->load(speculative=>1);
@@ -75,7 +75,7 @@ put('user/:id', {}, sub {
 });
 
 # destroy - DELETE /user/1
-destroy('user/:id', {}, sub{	
+destroy('/user/:id', {}, sub{	
 	my $r = shift;
 	my $user = User->new(id=>$r->params->{id});
 	$user->delete;
