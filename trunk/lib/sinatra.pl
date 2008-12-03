@@ -49,6 +49,7 @@ use base 'Sinatra::Base';
 use strict;
 use URI::Escape;
 
+#these define the acceptable parameters for a path request
 my $URI_CHAR = '[^/?:,&#\.]';
 my $PARAM = "(:($URI_CHAR+)|\\*)";
 my $SPLAT = '(.*?)';
@@ -62,6 +63,10 @@ sub new{
 		'param_keys' => [],
 		'options' => $options
 	};
+	#trim slashes
+	$path =~ s/^\///;
+	$path =~ s/\/$//;
+	#create regex that will attempt to match the request path
 	my $regex = $path;
 	$regex =~ s/$PARAM/
 	my $match = $&;
@@ -74,7 +79,7 @@ sub new{
 		"($URI_CHAR+)";
 	}/ge;
 	
-	$self->{'pattern'} = qr/^\/{0,1}$regex$/;
+	$self->{'pattern'} = qr/^\/$regex$/;
 	return bless($self, $class);
 }
 
@@ -221,7 +226,7 @@ sub new{
 sub load_defaults{
 	my $self = shift;
 	$self->options({
-		'environment' => $ENV{'SINATRA_ENV'} || 'development',
+		'environment' => $ENV{'SINATRA_ENVIRONMENT'} || 'development',
 		'view_directory' => ($ENV{'SINATRA_ROOT'} || $ENV{'DOCUMENT_ROOT'} || '.') . '/views',
 		'public_directory' => ($ENV{'SINATRA_ROOT'} || $ENV{'DOCUMENT_ROOT'} || '.') . '/public',
 	});
@@ -356,7 +361,7 @@ sub dispatch {
 sub application{return $application;}
 
 BEGIN {
-	$ENV{'SINATRA_ENVIRONMENT'} = 'TASK' if defined $ARGV[0];
+	$ENV{'SINATRA_ENVIRONMENT'} = 'task' if defined $ARGV[0];
 }
 END {
 	my $taskname = 'task_' . ($ARGV[0] || '');
